@@ -40,6 +40,7 @@ window.fetch = async (...args) => {
 function App() {
     const [accessToken, setAccessToken] = useState(undefined)
     const [contentItems, setContentItems] = useState(undefined)
+    const [userInfo, setUserInfo] = useState(undefined)
 
     const serverUrl = "https://localhost:44393";
     const clientId = 'umbraco-member';
@@ -126,6 +127,12 @@ function App() {
 			// initiate completion of the authorization flow if this is a callback from the server
             authorizationHandler.completeAuthorizationRequestIfPossible().then(() => {
                 // (add any handling for successful authorization here)
+				if (accessToken && !userInfo) {
+				   fetchUser();
+				}
+
+
+
             });
         });
 	
@@ -153,11 +160,36 @@ function App() {
             setContentItems(data);
         });
     };
+
+
+    const fetchUser = () => {
+        setUserInfo(undefined);
+
+		// fetch all articles of the content root ("home") using bearer token auth with the obtained access token (if any)
+        fetch(
+            `${serverUrl}/umbraco/delivery/api/v1/security/member/userinfo`,
+            {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                }
+            }
+        )
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Network response was not ok');
+            }
+            return response.json();
+        })
+        .then(data => {
+            setUserInfo(data);
+        });
+    };
     
     return (
         <div className="App">
             { accessToken && <>
-                    <h1>Whoo! You're authorized 😃</h1>
+                    <h1>Whoo {userInfo && userInfo.name}! You're authorized 😃</h1>
                     <button type="button" className="btn btn-primary" onClick={startLogoutFlow}>Yikes! Log me out!</button>
                     <p>Your access token is: <strong>{accessToken}</strong></p>
 					<p><s>If you fancy, you can use the token as a bearer token to test the Delivery API with your favorite API testing tool.</s></p>
@@ -181,6 +213,7 @@ function App() {
 					</ul>
                 </>
             }
+			
         </div>
     );
 }

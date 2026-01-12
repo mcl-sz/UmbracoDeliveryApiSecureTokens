@@ -1,7 +1,8 @@
-﻿using System.Diagnostics.CodeAnalysis;
-using Microsoft.AspNetCore.DataProtection;
+﻿using Microsoft.AspNetCore.DataProtection;
 using OpenIddict.Server;
 using OpenIddict.Validation;
+using System.Diagnostics.CodeAnalysis;
+using Umbraco.Cms.Api.Common.Security;
 using Umbraco.Cms.Core;
 
 namespace Server.Auth;
@@ -17,13 +18,37 @@ public class HideMemberTokensHandler
     private const string RefreshTokenCookieKey = "__Host-MemberRefreshToken";
     private const string CodeCookieKey = "__Host-MemberCode";
 
+
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IDataProtectionProvider _dataProtectionProvider;
+    private readonly RequestDelegate _next;
 
-    public HideMemberTokensHandler(IHttpContextAccessor httpContextAccessor, IDataProtectionProvider dataProtectionProvider)
+    public HideMemberTokensHandler(IHttpContextAccessor httpContextAccessor, IDataProtectionProvider dataProtectionProvider, RequestDelegate? next = null)
     {
         _httpContextAccessor = httpContextAccessor;
         _dataProtectionProvider = dataProtectionProvider;
+        _next = next ?? (_ => Task.CompletedTask);
+    }
+
+    /// <summary>
+    /// Intercept the UserInfo endpoint to change the accesstoken.
+    /// </summary>
+    public async Task InvokeAsync(HttpContext context)
+    {
+        if (context.Request.Path == Paths.MemberApi.UserinfoEndpoint)
+        {
+            var authHeader = context.Request.Headers["Authorization"].ToString();
+
+            if (!string.IsNullOrEmpty(authHeader) && authHeader == $"Bearer {RedactedTokenValue}")
+            {
+                if (TryGetCookie(AccessTokenCookieKey, out var accessToken))
+                {
+                    context.Request.Headers["Authorization"] = $"Bearer {accessToken}";
+                }
+            }
+        }
+
+        await _next(context);
     }
 
     /// <summary>
@@ -36,17 +61,17 @@ public class HideMemberTokensHandler
             // Only ever handle the member client.
             return ValueTask.CompletedTask;
         }
-    
+
         if (context.Response.Code is not null)
         {
             // move the PKCE code to a secure cookie, and redact it from the response.
             SetCookie(GetHttpContext(), CodeCookieKey, context.Response.Code);
             context.Response.Code = RedactedTokenValue;
         }
-    
+
         return ValueTask.CompletedTask;
     }
-    
+
     /// <summary>
     /// This is invoked when tokens (access and refresh tokens) are issued to a client.
     /// </summary>
@@ -59,7 +84,7 @@ public class HideMemberTokensHandler
         }
 
         HttpContext httpContext = GetHttpContext();
-        
+
         if (context.Response.AccessToken is not null)
         {
             // move the access token to a secure cookie, and redact it from the response.
@@ -166,7 +191,7 @@ public class HideMemberTokensHandler
             // does when writing cookies for cookie authentication.
             IsEssential = true,
         };
-        
+
         httpContext.Response.Cookies.Delete(key, cookieOptions);
         httpContext.Response.Cookies.Append(key, cookieValue, cookieOptions);
     }
@@ -189,7 +214,7 @@ public class HideMemberTokensHandler
 
     private string Decrypt(string value)
         => CreateDataProtector().Unprotect(value);
-    
+
     private IDataProtector CreateDataProtector()
         => _dataProtectionProvider.CreateProtector(nameof(HideMemberTokensHandler));
 }
